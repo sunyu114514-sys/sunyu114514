@@ -20,6 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectFromModel
 from sklearn.multiclass import OneVsRestClassifier
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+
 # 创建包含缺失值的示例CSV数据
 # 注意：注释使用单独行，便于read_csv过滤
 csv_data = '''A,B,C,D
@@ -233,7 +234,7 @@ class SBS():
 
 
 # 初始化K近邻分类器（设置近邻数=5）
-knn = LogisticRegression(penalty='l2',solver="lbfgs",C=10,random_state=10)
+knn = LogisticRegression(penalty='l2',solver="lbfgs",C=10,random_state=1)
 # ========== 特征选择阶段 ==========
 # 初始化序列后向选择器（目标保留1个特征）
 sbs = SBS(knn, k_features=1)
@@ -264,7 +265,6 @@ axes[0].plot(
     markersize=8,                    # 标记大小
     linestyle='--'                   # 虚线连接
 )
-
 # 图形美化设置
 axes[0].set_title('自定义SBS算法', pad=15)
 axes[0].set_ylabel('分类准确率', fontsize=10)    # Y轴标签
@@ -277,7 +277,6 @@ axes[0].tick_params(axis='both', labelsize=8)   # 刻度标签字号
 # 提取特征选择过程数据
 k_features = list(sfs.subsets_.keys())
 avg_scores = [sfs.subsets_[k]['avg_score'] for k in k_features]
-
 # 绘制性能曲线
 axes[1].plot(
     k_features,        # X轴：特征数量
@@ -288,30 +287,76 @@ axes[1].plot(
     linestyle='-.',    # 点划线连接
     alpha=0.8          # 透明度
 )
-
 # 图形美化设置（与左图对称）
 axes[1].set_title('mlxtend-SFS算法', pad=15)
 axes[1].set_xlabel('特征数量', fontsize=10)
 axes[1].set_ylim(0.7, 1.02)                   
 axes[1].grid(True, alpha=0.3)                 
 axes[1].tick_params(axis='both', labelsize=8)
-
 # ------------------ 全局调整与输出 ------------------
 plt.tight_layout(w_pad=3)  # 调整子图间距（避免标签重叠）
 plt.show()
-
 # ================== 特征选择结果解析 ==================
 # 输出自定义SBS结果
 print('\n=== 自定义SBS最优结果 ===')
 print(f'保留特征索引: {sbs.indices_}')
 print(f'验证集最高准确率: {sbs.k_score_:.2%}')
-
 # 输出mlxtend-SFS结果
 print('\n=== mlxtend-SFS最优结果 ===')
 print(f'保留特征索引: {sfs.k_feature_idx_}')
 print(f'交叉验证平均准确率: {sfs.k_score_:.2%}')
-
 # ================== 特征子集转换 ==================
 # 应用特征选择结果到数据集
 X_train_sbs = sfs.transform(X_train_std)  # 训练集特征转换
 X_test_sbs = sfs.transform(X_test_std)    # 测试集特征转换
+
+
+
+# 获取特征名称（排除第一列的类别标签）
+feat_labels = df_wine.columns[1:]  # 从第二列开始为特征列
+# 初始化随机森林分类器
+forest = RandomForestClassifier(
+    n_estimators=500,   # 使用500棵决策树
+    random_state=1,      # 固定随机种子保证结果可复现
+    max_depth=4,         # 限制树的最大深度为4
+)
+# 在训练集上训练随机森林模型
+forest.fit(X_train, y_train)
+# 获取特征重要性得分（数值越大表示越重要）
+importances = forest.feature_importances_
+# 对特征重要性进行降序排序，返回索引位置
+indices = np.argsort(importances)[::-1]  # [::-1]实现降序排列
+# 打印排序后的特征重要性
+for f in range(X_train.shape[1]):  # 遍历所有特征
+    # 格式化输出：序号 | 特征名称（左对齐30字符） | 重要性得分
+    print("%2d) %-*s %f" % (f + 1, 30, 
+                            feat_labels[indices[f]], 
+                            importances[indices[f]]))
+# 可视化特征重要性
+plt.title('Feature Importance')  # 设置图表标题
+plt.bar(range(X_train.shape[1]),  # X轴位置
+        importances[indices],     # 按排序后的重要性值绘制柱状图
+        align='center')           # 居中对齐柱状图
+# 设置X轴标签（使用特征名称）
+plt.xticks(range(X_train.shape[1]), 
+           feat_labels[indices], 
+           rotation=90)  # 旋转90度防止标签重叠
+plt.xlim([-1, X_train.shape[1]])  # 设置X轴范围
+plt.tight_layout()  # 自动调整子图参数
+plt.show()
+# 特征选择：选择重要性超过阈值的特征
+sfm = SelectFromModel(
+    forest, 
+    threshold=0.1,   # 重要性阈值，保留>=0.1的特征
+    prefit=True       # 使用已训练好的模型（forest已fit过）
+)
+X_selected = sfm.transform(X_train)  # 转换训练数据
+# 输出满足条件的特征数量
+print('Number of features that meet this threshold criterion:', 
+      X_selected.shape[1])
+# 打印被选中的特征及其重要性
+for f in range(X_selected.shape[1]):
+    # 注意：indices已排序，直接按顺序取前n个即可
+    print("%2d) %-*s %f" % (f + 1, 30, 
+                            feat_labels[indices[f]], 
+                            importances[indices[f]]))
