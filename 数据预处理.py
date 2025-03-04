@@ -174,7 +174,7 @@ X_test_std = stdsc.transform(X_test)        # 测试集用训练集的参数标�
 
 lr=OneVsRestClassifier(LogisticRegression(penalty="l1",C=1.0,solver="liblinear"))
 lr.fit(X_train_std,y_train)
-print("train set accuracy: %.2f" % lr.score(X_train_std, y_test))
+print("train set accuracy: %.2f" % lr.score(X_test_std, y_test))
 print("Test set accuracy: %.2f" % lr.score(X_test_std, y_test))
 
 # ================== 特征选择器类 SBS（序列后向选择） ==================
@@ -230,19 +230,88 @@ class SBS():
         self.estimator.fit(X_train[:, indices], y_train)
         y_pred = self.estimator.predict(X_test[:, indices])
         return self.scoring(y_test, y_pred)
-    
-SBS2=SFS(LogisticRegression(),k_features=1,forward=False,floating=False,scoring="accuracy",cv=5)
-knn = KNeighborsClassifier(n_neighbors=5)
-# selecting features
+
+
+# 初始化K近邻分类器（设置近邻数=5）
+knn = LogisticRegression(penalty='l2',solver="lbfgs",C=10,random_state=10)
+# ========== 特征选择阶段 ==========
+# 初始化序列后向选择器（目标保留1个特征）
 sbs = SBS(knn, k_features=1)
+sfs = SFS(estimator=knn, 
+          k_features=1,             # 目标特征数
+          forward=False,            # 后向选择模式
+          floating=False,           # 禁用浮动搜索（纯后向）
+          scoring='accuracy',       # 评估指标
+          cv=5,                     # 交叉验证折数
+          n_jobs=-1)                # 并行计算（使用所有CPU核心）
+# 执行特征选择流程（在标准化后的训练数据上进行）
 sbs.fit(X_train_std, y_train)
-# plotting performance of feature subsets
+sfs.fit(X_train_std, y_train)
+# ========== 可视化分析阶段 ==========
+# 获取每个迭代步骤的特征数量（从全特征到目标特征）
 k_feat = [len(k) for k in sbs.subsets_]
-plt.plot(k_feat, sbs.scores_, marker='o')
-plt.ylim([0.7, 1.02])
-plt.ylabel('Accuracy')
-plt.xlabel('Number of features')
-plt.grid()
-plt.tight_layout()
-# plt.savefig('images/04_08.png', dpi=300)
+# ================== 可视化对比：自定义SBS vs mlxtend-SFS ==================
+# 创建画布与子图（1行2列布局，尺寸8x4英寸）
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))
+fig.suptitle('特征选择算法对比 (SBS vs mlxtend-SFS)', fontsize=14, y=1.02)
+
+# ------------------ 子图1：自定义SBS算法结果 ------------------
+# 绘制特征数量与准确率关系曲线
+axes[0].plot(
+    [len(k) for k in sbs.subsets_],  # X轴：特征数量（从全特征到目标特征）
+    sbs.scores_,                     # Y轴：验证集准确率
+    marker='o',                      # 数据点标记样式
+    markersize=8,                    # 标记大小
+    linestyle='--'                   # 虚线连接
+)
+
+# 图形美化设置
+axes[0].set_title('自定义SBS算法', pad=15)
+axes[0].set_ylabel('分类准确率', fontsize=10)    # Y轴标签
+axes[0].set_xlabel('特征数量', fontsize=10)      # X轴标签
+axes[0].set_ylim(0.7, 1.02)                     # 固定Y轴范围便于比较
+axes[0].grid(True, alpha=0.3)                   # 半透明网格线
+axes[0].tick_params(axis='both', labelsize=8)   # 刻度标签字号
+
+# ------------------ 子图2：mlxtend-SFS算法结果 ------------------
+# 提取特征选择过程数据
+k_features = list(sfs.subsets_.keys())
+avg_scores = [sfs.subsets_[k]['avg_score'] for k in k_features]
+
+# 绘制性能曲线
+axes[1].plot(
+    k_features,        # X轴：特征数量
+    avg_scores,        # Y轴：交叉验证平均准确率
+    marker='s',        # 方形标记
+    color='orange',    # 曲线颜色
+    markersize=8,      # 标记大小
+    linestyle='-.',    # 点划线连接
+    alpha=0.8          # 透明度
+)
+
+# 图形美化设置（与左图对称）
+axes[1].set_title('mlxtend-SFS算法', pad=15)
+axes[1].set_xlabel('特征数量', fontsize=10)
+axes[1].set_ylim(0.7, 1.02)                   
+axes[1].grid(True, alpha=0.3)                 
+axes[1].tick_params(axis='both', labelsize=8)
+
+# ------------------ 全局调整与输出 ------------------
+plt.tight_layout(w_pad=3)  # 调整子图间距（避免标签重叠）
 plt.show()
+
+# ================== 特征选择结果解析 ==================
+# 输出自定义SBS结果
+print('\n=== 自定义SBS最优结果 ===')
+print(f'保留特征索引: {sbs.indices_}')
+print(f'验证集最高准确率: {sbs.k_score_:.2%}')
+
+# 输出mlxtend-SFS结果
+print('\n=== mlxtend-SFS最优结果 ===')
+print(f'保留特征索引: {sfs.k_feature_idx_}')
+print(f'交叉验证平均准确率: {sfs.k_score_:.2%}')
+
+# ================== 特征子集转换 ==================
+# 应用特征选择结果到数据集
+X_train_sbs = sfs.transform(X_train_std)  # 训练集特征转换
+X_test_sbs = sfs.transform(X_test_std)    # 测试集特征转换
