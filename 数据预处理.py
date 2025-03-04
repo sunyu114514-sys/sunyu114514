@@ -18,7 +18,8 @@ from sklearn.metrics import accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectFromModel
-
+from sklearn.multiclass import OneVsRestClassifier
+from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 # 创建包含缺失值的示例CSV数据
 # 注意：注释使用单独行，便于read_csv过滤
 csv_data = '''A,B,C,D
@@ -140,25 +141,121 @@ c_transf = ColumnTransformer([
 c_transf.fit_transform(X).astype(float)
 
 
+
+# 读取葡萄酒数据集（UCI ML仓库），无列标题
 df_wine = pd.read_csv('https://archive.ics.uci.edu/'
-                      'ml/machine-learning-databases/wine/wine.data',
-                      header=None)
+                     'ml/machine-learning-databases/wine/wine.data',
+                     header=None)
+# 设置数据集列名称
 df_wine.columns = ['Class label', 'Alcohol', 'Malic acid', 'Ash',
-                   'Alcalinity of ash', 'Magnesium', 'Total phenols',
-                   'Flavanoids', 'Nonflavanoid phenols', 'Proanthocyanins',
-                   'Color intensity', 'Hue', 'OD280/OD315 of diluted wines',
-                   'Proline']
+                  'Alcalinity of ash', 'Magnesium', 'Total phenols',
+                  'Flavanoids', 'Nonflavanoid phenols', 'Proanthocyanins',
+                  'Color intensity', 'Hue', 'OD280/OD315 of diluted wines',
+                  'Proline']
+# 打印数据集中的唯一类别标签（葡萄酒种类）
 print('Class labels', np.unique(df_wine['Class label']))
-
-
+# 划分特征矩阵X和标签y（第1列为标签，其余为特征）
 X, y = df_wine.iloc[:, 1:].values, df_wine.iloc[:, 0].values
-X_train, X_test, y_train, y_test =    train_test_split(X, y, 
-                     test_size=0.3, 
-                     random_state=0, 
-                     stratify=y)
+# 按分层抽样划分训练集/测试集（保持类别比例）
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, 
+    test_size=0.3,          # 30%测试集
+    random_state=0,         # 固定随机种子
+    stratify=y              # 保持类别分布一致性
+)
+# 创建归一化处理器（MinMaxScaler：缩放到[0,1]区间）
 mms = MinMaxScaler()
-X_train_norm = mms.fit_transform(X_train)
-X_test_norm = mms.transform(X_test)
+X_train_norm = mms.fit_transform(X_train)  # 训练集拟合+转换
+X_test_norm = mms.transform(X_test)        # 测试集仅转换（避免数据泄露）
+# 创建标准化处理器（StandardScaler：均值0，方差1）
 stdsc = StandardScaler()
-X_train_std = stdsc.fit_transform(X_train)
-X_test_std = stdsc.transform(X_test)
+X_train_std = stdsc.fit_transform(X_train)  # 训练集拟合+标准化
+X_test_std = stdsc.transform(X_test)        # 测试集用训练集的参数标准化
+
+lr=OneVsRestClassifier(LogisticRegression(penalty="l1",C=1.0,solver="liblinear"))
+lr.fit(X_train_std,y_train)
+print("train set accuracy: %.2f" % lr.score(X_train_std, y_test))
+print("Test set accuracy: %.2f" % lr.score(X_test_std, y_test))
+
+# ================== 特征选择器类 SBS（序列后向选择） ==================
+class SBS():
+    def __init__(self, estimator, k_features, scoring=accuracy_score,
+                 test_size=0.25, random_state=1):
+        """
+        初始化参数：
+        estimator: 基础分类器（如KNN）
+        k_features: 目标特征数量
+        scoring: 评估指标（默认准确率）
+        test_size: 验证集划分比例
+        random_state: 随机种子
+        """
+        self.scoring = scoring
+        self.estimator = clone(estimator)  # 克隆分类器避免污染原始对象
+        self.k_features = k_features
+        self.test_size = test_size
+        self.random_state = random_state
+    def fit(self, X, y):
+        """ 执行后向特征选择流程 """
+        # 划分训练验证集
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=self.test_size,
+                                          random_state=self.random_state)
+        dim = X_train.shape[1]  # 初始特征维度
+        self.indices_ = tuple(range(dim))  # 初始特征索引（全特征）
+        self.subsets_ = [self.indices_]  # 记录特征子集演化过程
+        # 计算全特征时的基准分数
+        score = self._calc_score(X_train, y_train, X_test, y_test, self.indices_)
+        self.scores_ = [score]  # 记录分数变化
+        # 后向选择主循环：逐步减少特征直到目标数量
+        while dim > self.k_features:
+            scores = []
+            subsets = []
+            # 遍历所有可能的dim-1维子集
+            for p in combinations(self.indices_, r=dim - 1):
+                score = self._calc_score(X_train, y_train, X_test, y_test, p)
+                scores.append(score)
+                subsets.append(p)
+            # 选择性能最佳的子集
+            best = np.argmax(scores)
+            self.indices_ = subsets[best]
+            self.subsets_.append(self.indices_)
+            dim -= 1
+            self.scores_.append(scores[best])
+        self.k_score_ = self.scores_[-1]  # 最终k_features时的分数
+        return self
+    def transform(self, X):
+        """ 应用最终选择的特征子集 """
+        return X[:, self.indices_]
+    def _calc_score(self, X_train, y_train, X_test, y_test, indices):
+        """ 私有方法：计算指定特征子集的验证分数 """
+        self.estimator.fit(X_train[:, indices], y_train)
+        y_pred = self.estimator.predict(X_test[:, indices])
+        return self.scoring(y_test, y_pred)
+    
+SBS2=SFS(LogisticRegression(),k_features=1,forward=False,floating=False,scoring="accuracy",cv=5)
+
+knn = KNeighborsClassifier(n_neighbors=5)
+# selecting features
+sbs = SBS(knn, k_features=1)
+sbs.fit(X_train_std, y_train)
+# plotting performance of feature subsets
+k_feat = [len(k) for k in sbs.subsets_]
+plt.plot(k_feat, sbs.scores_, marker='o')
+plt.ylim([0.7, 1.02])
+plt.ylabel('Accuracy')
+plt.xlabel('Number of features')
+plt.grid()
+plt.tight_layout()
+# plt.savefig('images/04_08.png', dpi=300)
+plt.show()
+sbs2 = SBS2(knn, k_features=1)
+sbs.fit(X_train_std, y_train)
+# plotting performance of feature subsets
+k_feat = [len(k) for k in sbs.subsets_]
+plt.plot(k_feat, sbs.scores_, marker='o')
+plt.ylim([0.7, 1.02])
+plt.ylabel('Accuracy')
+plt.xlabel('Number of features')
+plt.grid()
+plt.tight_layout()
+# plt.savefig('images/04_08.png', dpi=300)
+plt.show()
