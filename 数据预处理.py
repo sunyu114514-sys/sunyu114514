@@ -118,7 +118,7 @@ c_transf = ColumnTransformer([
     ('nothing', 'passthrough', [1, 2]) # 保留第1,2列（尺寸、价格）不做处理
 ])
 # 应用转换并转换为float类型（独热编码结果是浮点数）
-c_transf.fit_transform(X).astype(float)
+c_transf.fit_transform(X).astype(float) 
 # 使用pandas自动进行独热编码（自动识别字符型列）
 pd.get_dummies(df[['price', 'color', 'size']])
 # 删除第一个哑变量列（避免共线性问题，适用于线性模型）
