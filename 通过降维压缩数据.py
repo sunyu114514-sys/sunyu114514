@@ -14,8 +14,10 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.linalg import eigh
 from distutils.version import LooseVersion as Version
 from scipy import __version__ as scipy_version
-    from numpy import exp
-    from scipy import exp
+from numpy import exp
+from scipy import exp
 from sklearn.datasets import make_moons
 from sklearn.datasets import make_circles
 from sklearn.decomposition import KernelPCA
+
+
