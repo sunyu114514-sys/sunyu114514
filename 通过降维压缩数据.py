@@ -297,6 +297,9 @@ def rbf_kernel_pca(X, gamma, n_components):
     X_pc = np.column_stack([eigvecs[:, i] 
                           for i in range(n_components)])
     return X_pc
+
+
+
 X,y=make_moons(n_samples=100, random_state=123)
 scki_kpca = KernelPCA(n_components=2, kernel='rbf', gamma=15)
 X_skernpca = scki_kpca.fit_transform(X)
@@ -306,7 +309,6 @@ plt.scatter(X_skernpca[y==1, 0], X_skernpca[y==1, 1],
             color='blue', marker='o', alpha=0.5)
 plt.xlabel('PC 1')
 plt.ylabel('PC 2')
-plt.legend(loc='lower left')
 plt.tight_layout()  
 plt.show()
 
